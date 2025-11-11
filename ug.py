@@ -24,12 +24,6 @@ import math
 import m3u8
 from urllib.parse import urljoin
 from vars import *  # Add this import
-from db import Database
-
-db = Database()
-# Add this at the top with other imports
-TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
-MP4DECRYPT = os.path.join(TOOLS_DIR, "mp4decrypt")  # Linux doesn't need .exe extension
 
 def duration(filename):
     result = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
@@ -147,16 +141,6 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path=None, output
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Verify mp4decrypt exists and is executable
-        if not os.path.exists(MP4DECRYPT):
-            raise FileNotFoundError(f"mp4decrypt tool not found at {MP4DECRYPT}")
-        
-        try:
-            os.chmod(MP4DECRYPT, 0o755)
-            print(f"Successfully set permissions for {MP4DECRYPT}")
-        except Exception as e:
-            print(f"Warning: Could not set permissions for mp4decrypt: {str(e)}")
-
         cmd1 = f'yt-dlp -f "bv[height<={quality}]+ba/b" -o "{output_path}/file.%(ext)s" --allow-unplayable-format --no-check-certificate --external-downloader aria2c "{mpd_url}"'
         print(f"Running command: {cmd1}")
         os.system(cmd1)
@@ -170,7 +154,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path=None, output
 
         for data in avDir:
             if data.suffix == ".mp4" and not video_decrypted:
-                cmd2 = f'"{MP4DECRYPT}" {keys_string} --show-progress "{data}" "{output_path}/video.mp4"'
+                cmd2 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/video.mp4"'
                 print(f"Running command: {cmd2}")
                 result = subprocess.run(cmd2, shell=True, capture_output=True, text=True)
                 if result.returncode != 0:
@@ -180,7 +164,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path=None, output
                     video_decrypted = True
                 data.unlink()
             elif data.suffix == ".m4a" and not audio_decrypted:
-                cmd3 = f'"{MP4DECRYPT}" {keys_string} --show-progress "{data}" "{output_path}/audio.m4a"'
+                cmd3 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/audio.m4a"'
                 print(f"Running command: {cmd3}")
                 result = subprocess.run(cmd3, shell=True, capture_output=True, text=True)
                 if result.returncode != 0:
@@ -400,8 +384,9 @@ async def download_video(url, cmd, name):
         try:
             # Optimize download command with better aria2c parameters
             download_cmd = f'{cmd} -R 25 --fragment-retries 25 --external-downloader aria2c --downloader-args "aria2c: -x 16 -j 32 -s 16 -k 1M --file-allocation=none --optimize-concurrent-downloads=true"'
-
-            print(f"\n⚡ Downloading...")
+            global failed_counter
+            print(download_cmd)
+            logging.info(download_cmd)
             k = subprocess.run(download_cmd, shell=True)
             
             # Check if file exists and has size > 0
@@ -459,14 +444,6 @@ async def send_doc(bot: Client, m: Message, cc, ka, cc1, prog, count, name, chan
     
     # Send document to user
     sent_doc = await bot.send_document(channel_id, ka, caption=cc1)
-    
-    # Try forwarding to log channel if configured (don't validate)
-    log_channel = db.get_log_channel(bot.me.username)
-    if log_channel:
-        try:
-            await bot.send_document(log_channel, sent_doc.document.file_id, caption=f"#Document\n\nUser: {m.from_user.mention}\nFile: {name}\n\n{cc1}")
-        except:
-            pass  # Ignore any errors when forwarding to log channel
     
     count+=1
     await reply.delete(True)
